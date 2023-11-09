@@ -1,0 +1,148 @@
+"""
+ver.23/06/23
+"""
+from lxml import etree
+import numpy as np
+import sys
+import os
+
+file_count = 1 #出力するファイル名用の変数
+page_width = 1000 #ページ幅の設定　オーバーサイズでもよい
+x_start = 0 #背景描写の開始座標
+home_directory = os.path.expanduser("~") # ディレクトリの指定用
+
+# 実行時引数を使って変数を初期化
+args = sys.argv
+args_count = len(sys.argv)-1 #引数の数をカウント　最初の引数はスクリプト名なので除外
+def_fontsize = args[1] # 対象とするフォントサイズの下限の指定
+color = args[2] # 背景色の設定
+
+# 実行時引数の数に応じた変数の初期化
+if args_count < 2 or args_count > 4:
+    # 実行時引数の数が正しくない場合
+    sys.exit("実行時引数が正しくありません")
+elif args_count == 2:
+    # 実行時引数としてファイルのパスを指定しなかった場合
+    dir_path_in = os.path.join(home_directory, 'dir_in')
+    dir_path_out = os.path.join(home_directory, 'dir_out')
+elif args_count == 4:
+    # 実行時引数としてファイルのパスを指定した場合
+    dir_path_in = args[3]
+    dir_path_out = args[4]
+elif args_count == 3:
+    # インプットとアウトプットのパスが同じ場合
+    dir_path_in = args[3]
+    
+# svgファイルを含むディレクトリを探す
+def check_svg_directory(directory):
+    svg_dir = os.path.join(directory, 'svg')
+    if os.path.exists(svg_dir) and os.path.isdir(svg_dir):
+        print(svg_dir)
+        file_proces(svg_dir)
+    else:
+        subdirectories = [subdir for subdir in os.listdir(directory) if os.path.isdir(os.path.join(directory, subdir))]
+        for subdir in subdirectories:
+            new_directory = os.path.join(directory, subdir)
+            check_svg_directory(new_directory)
+
+# svg_dir内のファイルを処理
+def file_proces(svg_dir):
+    global file_count
+    global def_fontsize
+    global color
+    file_list = os.listdir(svg_dir)
+    for file_name in file_list:
+        file_path_in = os.path.join(svg_dir, file_name)
+        if file_name.lower().endswith('.svg') and 'txt' not in file_name: #svgファイルのみを対象とし、テキスト情報のみのファイルを処理対象としない
+            count = 0 #rectanglesの要素番号用
+            chara_count = 1 # 背景横幅を決めるために、文字数を数える
+            rectangles = np.array([ #fontrectの情報を格納するため　５つ目は前後に何文字つながっているかの判定用
+                [0, 0, 0, 0, 0]
+            ])
+
+            # ファイルを読み込んでインポート
+            tree = etree.parse(file_path_in)
+            root = tree.getroot()
+
+            # フォントサイズが一定以上の文字のfontRectをrectanglesに保存
+            for i in root.findall('{http://www.w3.org/2000/svg}desc'):  # rootの要素の直接の子から'{http://www.w3.org/2000/svg}desc'を含むものを検索する
+                chara_info = i.attrib  # 属性情報を取得
+                if "fontName" in chara_info and 'fontRect' in chara_info:  # 文字情報に関係するもののみを対象とする
+                    font_rect = chara_info["fontRect"]  # rect要素のみを取得
+                    split_data = font_rect.split(",")  # カンマで要素を区切る
+                    font_size = float(split_data[3]) - float(split_data[1]) # フォントの縦幅を計算
+                    if font_size > float(def_fontsize):  # フォントサイズの判定
+                        i.set('frag', 'T') # フラグTを追加
+                        if abs(float(rectangles[count][1]) - float(split_data[1])) > (float(def_fontsize)/2): #前に見た文字と今見てる文字で一定数以上y座標が違うとき、別の行の文字とする
+                            # 新しい背景の描画範囲として登録する
+                            chara_count = 1
+                            new_rectangle = np.array([split_data[0], split_data[1], split_data[2], split_data[3], chara_count])
+                            rectangles = np.vstack((rectangles, new_rectangle))
+                            count += 1
+                        else: # 今見ている行内にある文字数のカウントが増える
+                            rectangles[count][4] =  int(rectangles[count][4])+1
+                            rectangles[count][2] = split_data[2] # 背景の描画を一部のみとする時用に描画範囲の横幅を更新
+    
+            # rectanglesを使って、背景が描写される範囲内に文字がある場合はその文字情報にもフラグを追加する
+            for i in root.findall('{http://www.w3.org/2000/svg}desc'):  # rootの要素の直接の子から'{http://www.w3.org/2000/svg}desc'を含むものを検索する
+                chara_info = i.attrib  # 属性情報を取得
+                if "fontName" in chara_info and 'fontRect' in chara_info:  # 文字情報に関係するもののみを対象とする
+                    if not 'frag' in i.attrib : # まだフラグを持ってないものを対象とする
+                        font_rect = chara_info["fontRect"]  # rect要素のみを取得
+                        split_data = font_rect.split(",")  # カンマで要素を区切る
+                        for j in range(1, len(rectangles)):
+                            if int(rectangles[j][4]) > 3: # 反転する文字が３文字以上続く場合
+                                if rectangles[j][1] < split_data[1] < rectangles[j][3]: # 背景を描画する範囲内に今見ている文字が入っているか
+                                    i.set('frag', 'T') # フラグTを追加
+                            else:
+                                if rectangles[j][1] < split_data[1] < rectangles[j][3]:
+                                    if rectangles[j][0] < split_data[0] < rectangles[j][2]:
+                                        if rectangles[j][0] < split_data[2] < rectangles[j][2]: # 背景を描画する範囲内に今見ている文字が入っているか
+                                            i.set('frag', 'T') # フラグTを追加
+    
+            # 文字の後ろに背景を設定する
+            for i in range(1, len(rectangles)):
+                if int(rectangles[i][4]) > 3: # 反転する文字が３文字以上続く場合（ページ数などの場合は、背景の描写をその一部のみとする）
+                    new_rect = etree.Element('{http://www.w3.org/2000/svg}rect')
+                    new_rect.set('width', str(page_width))
+                    new_rect.set('height', str(float(rectangles[i][3]) - float(rectangles[i][1]) + 10))
+                    new_rect.set('x', str(x_start))
+                    new_rect.set('y', str(float(rectangles[i][1])-5))
+                    new_rect.set('fill',color)
+                    root.append(new_rect)
+                else: # 一部のみ背景を描写する場合
+                    new_rect = etree.Element('{http://www.w3.org/2000/svg}rect')
+                    new_rect.set('width', str(float(rectangles[i][2]) - float(rectangles[i][0]) + 10))
+                    new_rect.set('height', str(float(rectangles[i][3]) - float(rectangles[i][1]) + 10))
+                    new_rect.set('x', str(float(rectangles[i][0])-5))
+                    new_rect.set('y', str(float(rectangles[i][1])-5))
+                    new_rect.set('fill',color)
+                    root.append(new_rect)
+                    
+            # フラグTを持つ文字の描画処理
+            for i in root.findall('{http://www.w3.org/2000/svg}desc'):
+                chara_info = i.attrib  # 属性情報を取得
+                if "fontName" in chara_info and 'fontRect' in chara_info:  # 文字情報に関係するもののみを対象とする        
+                    if 'frag' in i.attrib :
+                        path = i.getnext()
+                        chara_info = path.attrib # 属性情報を取得             
+                        new_path = etree.Element('{http://www.w3.org/2000/svg}path')
+                        new_path.set('d', chara_info["d"])
+                        new_path.set('fill', "#FFFFFF") # 文字の色の指定
+                        root.append(new_path)      
+            # ファイルへの書き込み
+            tree = etree.ElementTree(root)
+            if args_count == 3:
+                dir_path_out = svg_dir
+                write_path = os.path.join(dir_path_out, "{:03d}_changed.svg".format(file_count))
+            else:
+                write_path = os.path.join(dir_path_out, "{:04d}.svg".format(file_count))
+            tree.write(write_path, encoding='UTF-8', xml_declaration=True)
+            file_count += 1
+
+# インプットとアウトプットが同じ場合は、ディレクトリの探索を行わない
+# これは直接svgのディレクトリがインプットとして指定されていることを想定
+if args_count == 2 or args_count == 4:
+    check_svg_directory(dir_path_in)
+elif args_count == 3:
+    file_proces(dir_path_in)
