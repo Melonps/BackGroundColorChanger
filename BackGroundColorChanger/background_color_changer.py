@@ -1,9 +1,10 @@
 import os
 from lxml import etree
-import argparse
 import numpy as np
 from tqdm import tqdm
-from util import get_random_color_code
+
+from BackGroundColorChanger.help_function.util import get_random_color_code
+from BackGroundColorChanger.S3Interface.s3_data_manipulation import S3Interface
 
 file_count = 1
 page_width = 1000
@@ -11,7 +12,7 @@ x_start = 0
 file_path = "color_data.txt"
 
 
-def check_svg_directory(directory, fontsize, color):
+def check_svg_directory(directory: str, fontsize: float, color: str, s3_instance):
     """
     指定されたディレクトリ内のSVGファイルを処理し、フォントサイズに基づいてバックグラウンドカラーを追加します。
 
@@ -29,10 +30,12 @@ def check_svg_directory(directory, fontsize, color):
                 if file_name.lower().endswith(".svg") and "txt" not in file_name:
                     file_path_in = os.path.join(root, file_name)
                     dir_path_out = os.path.dirname(file_path_in)
-                    file_process(file_path_in, fontsize, color, dir_path_out)
+                    file_process(file_path_in, fontsize, color, s3_instance)
 
 
-def file_process(file_path_in, fontsize, color, dir_path_out):
+def file_process(
+    file_path_in: str, fontsize: float, color: str, s3_instance: S3Interface
+):
     """
     単一のSVGファイルを処理し、フォントサイズに基づいてバックグラウンドカラーを追加します。
 
@@ -127,32 +130,5 @@ def file_process(file_path_in, fontsize, color, dir_path_out):
         write_path = file_path_in.replace(".svg", f"_changed_#{color}.svg")
         print(f"Writing to {write_path}")
         tree.write(write_path, encoding="UTF-8", xml_declaration=True)
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Process SVG files with background color based on font size."
-    )
-    parser.add_argument(
-        "--fontsize", required=True, type=float, help="Minimum font size for processing"
-    )
-    parser.add_argument(
-        "--color",
-        type=str,
-        help="Background color in hexadecimal format",
-    )
-    parser.add_argument(
-        "--dir_path_in",
-        required=True,
-        nargs="?",
-        default=None,
-        help="Input directory path (optional)",
-    )
-
-    args = parser.parse_args()
-
-    check_svg_directory(args.dir_path_in, args.fontsize, args.color)
-
-
-if __name__ == "__main__":
-    main()
+        s3_instance.upload_svg_to_s3(write_path)
+        os.remove(write_path)
